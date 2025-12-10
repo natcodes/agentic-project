@@ -573,6 +573,7 @@ class BrandingInteractiveAgent(Agent):
                     self._set_state(worker, {})
 
             else: # Not DONE → field change event: keep latest value
+                data = message.getData()
                 path = data.get("path")
                 if path and worker:
                     timestamp = worker.get_data(path + ".timestamp")
