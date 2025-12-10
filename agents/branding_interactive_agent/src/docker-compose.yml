@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16
+    container_name: ideaction-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ideaction
+      POSTGRES_PASSWORD: ideaction_password
+      POSTGRES_DB: ideaction
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
