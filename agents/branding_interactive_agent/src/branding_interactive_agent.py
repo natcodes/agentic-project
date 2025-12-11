@@ -378,8 +378,11 @@ class BrandingInteractiveAgent(Agent):
 
         # Handle UI events from forms
         if input == "EVENT":
-            if message.isData():
-                data = message.getData()
+            # Safely fetch event data up-front so `data`/`action` are always defined
+            data = message.getData()
+            form_id = None
+            action = None
+            if message.isData() and data:
                 form_id = data.get("form_id")
                 action = data.get("action")
 
@@ -392,207 +395,206 @@ class BrandingInteractiveAgent(Agent):
                             output="FORM",
                         )
 
-                step = self._get_step(worker)
-                state = self._get_state(worker)
+                    step = self._get_step(worker)
+                    state = self._get_state(worker)
 
-        # STEP 0: user profile -> app_user
-                if step == 0:
-                    full_name_data = worker.get_data("full_name.value") or {}
-                    locale_data = worker.get_data("locale.value") or {}
+    # STEP 0: user profile -> app_user
+                    if step == 0:
+                        full_name_data = worker.get_data("full_name.value") or {}
+                        locale_data = worker.get_data("locale.value") or {}
 
-                    full_name = (full_name_data.get("value") or "").strip()
-                    locale = (locale_data.get("value") or "").strip() or None
+                        full_name = (full_name_data.get("value") or "").strip()
+                        locale = (locale_data.get("value") or "").strip() or None
 
-                    if not full_name:
-                        # Simple validation: ask again if empty
+                        if not full_name:
+                            # Simple validation: ask again if empty
+                            worker.write_data(
+                                "I need at least a name so I know how to address you. 😊",
+                                output="TEXT",
+                            )
+                            # Re-open the profile form
+                            self._create_profile_form(worker)
+                            return None
+
+                        # Save to DB via util_functions (you implement this helper)
+                        try:
+                            app_user_id = util_functions.save_app_user(
+                                full_name=full_name,
+                                locale=locale,
+                            )
+                        except Exception as e:
+                            logging.error(f"Error saving app_user: {e}")
+                            worker.write_data(
+                                "I had trouble saving your profile. Please try again in a moment.",
+                                output="TEXT",
+                            )
+                            # Re-open the profile form so they can retry
+                            self._create_profile_form(worker)
+                            return None
+
+                        # Store in state for later steps/agents if needed
+                        state["app_user_id"] = str(app_user_id)
+                        state["full_name"] = full_name
+                        state["locale"] = locale
+                        self._set_state(worker, state)
+
+                        # Friendly confirmation
                         worker.write_data(
-                            "I need at least a name so I know how to address you. 😊",
+                            f"Nice to meet you, {full_name}! 🎉 Your profile is saved.\n\n"
+                            "Next, let’s start mapping your brand identity.",
                             output="TEXT",
                         )
-                        # Re-open the profile form
-                        self._create_profile_form(worker)
-                        return None
 
-                    # Save to DB via util_functions (you implement this helper)
-                    try:
-                        app_user_id = util_functions.save_app_user(
-                            full_name=full_name,
-                            locale=locale,
-                        )
-                    except Exception as e:
-                        logging.error(f"Error saving app_user: {e}")
-                        worker.write_data(
-                            "I had trouble saving your profile. Please try again in a moment.",
-                            output="TEXT",
-                        )
-                        # Re-open the profile form so they can retry
-                        self._create_profile_form(worker)
-                        return None
-
-                    # Store in state for later steps/agents if needed
-                    state["app_user_id"] = str(app_user_id)
-                    state["full_name"] = full_name
-                    state["locale"] = locale
-                    self._set_state(worker, state)
-
-                    # Friendly confirmation
-                    worker.write_data(
-                        f"Nice to meet you, {full_name}! 🎉 Your profile is saved.\n\n"
-                        "Next, let’s start mapping your brand identity.",
-                        output="TEXT",
-                    )
-
-                    self._set_step(worker, 1)
-                    self._create_step1_form(worker)
-
-    # STEP 1: service summary
-                elif step == 1:
-                    service_summary_data = worker.get_data("service_summary.value") or {}
-                    service_summary = (service_summary_data.get("value") or "").strip()
-
-                    if not service_summary:
-                        worker.write_data(
-                            "Give me 1–2 sentences about what you do or offer so I can ground your brand identity. 🙂",
-                            output="TEXT",
-                        )
+                        self._set_step(worker, 1)
                         self._create_step1_form(worker)
-                        return None
 
-                    state["service_summary"] = service_summary
-                    self._set_state(worker, state)
+        # STEP 1: service summary
+                    elif step == 1:
+                        service_summary_data = worker.get_data("service_summary.value") or {}
+                        service_summary = (service_summary_data.get("value") or "").strip()
 
-                    # (Optionally: create project + service_description here, see below.)
-                    # self._maybe_create_project(worker, state)
+                        if not service_summary:
+                            worker.write_data(
+                                "Give me 1–2 sentences about what you do or offer so I can ground your brand identity. 🙂",
+                                output="TEXT",
+                            )
+                            self._create_step1_form(worker)
+                            return None
 
-                    self._set_step(worker, 2)
-                    self._create_step2_form(worker)
+                        state["service_summary"] = service_summary
+                        self._set_state(worker, state)
 
-    # STEP 2: brand core message
-                elif step == 2:
-                    core_msg = worker.get_data("brand_core_message.value")
-                    state["brand_core_message"] = core_msg
-                    self._set_state(worker, state)
+                        # (Optionally: create project + service_description here, see below.)
+                        # self._maybe_create_project(worker, state)
 
-                    self._set_step(worker, 3)
-                    self._create_step3_form(worker)
+                        self._set_step(worker, 2)
+                        self._create_step2_form(worker)
 
-                # STEP 3: values & tone
-                elif step == 3:
-                    values_and_tone = worker.get_data("values_and_tone_raw.value")
-                    state["values_and_tone_raw"] = values_and_tone
-                    self._set_state(worker, state)
+        # STEP 2: brand core message
+                    elif step == 2:
+                        core_msg = worker.get_data("brand_core_message.value")
+                        state["brand_core_message"] = core_msg
+                        self._set_state(worker, state)
 
-                    self._set_step(worker, 4)
-                    self._create_step4_form(worker)
+                        self._set_step(worker, 3)
+                        self._create_step3_form(worker)
 
-                # STEP 4: audience
-                elif step == 4:
-                    audience_raw = worker.get_data("audience_raw.value")
-                    state["audience_raw"] = audience_raw
-                    self._set_state(worker, state)
+        # STEP 3: values & tone
+                    elif step == 3:
+                        values_and_tone = worker.get_data("values_and_tone_raw.value")
+                        state["values_and_tone_raw"] = values_and_tone
+                        self._set_state(worker, state)
 
-                    self._set_step(worker, 5)
-                    self._create_step5_form(worker)
+                        self._set_step(worker, 4)
+                        self._create_step4_form(worker)
 
-                # STEP 5: visuals -> finalize
-                elif step == 5:
-                    visuals_raw = worker.get_data("visuals_raw.value")
-                    state["visuals_raw"] = visuals_raw
-                    self._set_state(worker, state)
+        # STEP 4: audience
+                    elif step == 4:
+                        audience_raw = worker.get_data("audience_raw.value")
+                        state["audience_raw"] = audience_raw
+                        self._set_state(worker, state)
 
-                    # At this point all answers are in `state`
-                    # Optional: get project_id from properties 
-                    project_id = None
-                    if properties and "project_id" in properties:
-                        project_id = properties["project_id"]
+                        self._set_step(worker, 5)
+                        self._create_step5_form(worker)
+
+        # STEP 5: visuals -> finalize
+                    elif step == 5:
+                        visuals_raw = worker.get_data("visuals_raw.value")
+                        state["visuals_raw"] = visuals_raw
+                        self._set_state(worker, state)
+
+                        # At this point all answers are in `state`
+                        # Optional: get project_id from properties 
+                        project_id = None
+                        if properties and "project_id" in properties:
+                            project_id = properties["project_id"]
+                        else:
+                            project_id = self.properties.get("project_id")
+
+                        # Load service description if you want to pass it into LLM
+                        service_desc = None
+                        try:
+                            if project_id:
+                                service_desc = util_functions.load_service_description(project_id)
+                        except Exception as e:
+                            logging.error(f"Error loading service description: {e}")
+
+                        # 1) Generate BrandIdentityMap using your LLM helper
+                        try:
+                            brand_identity = util_functions.generate_brand_identity(
+                                service_desc=service_desc,
+                                answers=state,
+                            )
+                        except Exception as e:
+                            logging.error(f"Error generating BrandIdentityMap: {e}")
+                            worker.write_data(
+                                "I had trouble generating your Brand Identity Map. Please try again or contact support.",
+                                output="TEXT",
+                            )
+                            worker.write_eos(output="TEXT")
+                            return None
+
+                        # 2) Save BrandIdentityMap to DB
+                        try:
+                            util_functions.save_brand_identity(project_id, brand_identity)
+                        except Exception as e:
+                            logging.error(f"Error saving BrandIdentityMap: {e}")
+                            worker.write_data(
+                                "I generated your Brand Identity Map, but failed to save it. Please contact support.",
+                                output="TEXT",
+                            )
+                            worker.write_eos(output="TEXT")
+                            return None
+
+                        # 3) Show summary
+                        summary_lines = [
+                            "Here is your Brand Identity Map:",
+                            f"- Brand name: {brand_identity.get('brand_name')}",
+                            f"- Tagline: {brand_identity.get('tagline')}",
+                            f"- Mission: {brand_identity.get('mission')}",
+                        ]
+                        values = brand_identity.get("values") or []
+                        if values:
+                            summary_lines.append(f"- Values: {', '.join(values)}")
+                        uvp = brand_identity.get("uniqueValueProposition")
+                        if uvp:
+                            summary_lines.append(f"- Unique Value Proposition: {uvp}")
+
+                        worker.write_data("\n".join(summary_lines), output="TEXT")
+                        worker.write_data(
+                            "\nThis version has been saved. You can refine it later if needed.",
+                            output="TEXT",
+                        )
+                        worker.write_eos(output="TEXT")
+
+                        # Reset state if you want to allow another run
+                        self._set_step(worker, 0)
+                        self._set_state(worker, {})
                     else:
-                        project_id = self.properties.get("project_id")
+                        # Unknown step; reset
+                        self._set_step(worker, 0)
+                        self._set_state(worker, {})
 
-                    # Load service description if you want to pass it into LLM
-                    service_desc = None
-                    try:
-                        if project_id:
-                            service_desc = util_functions.load_service_description(project_id)
-                    except Exception as e:
-                        logging.error(f"Error loading service description: {e}")
-
-                    # 1) Generate BrandIdentityMap using your LLM helper
-                    try:
-                        brand_identity = util_functions.generate_brand_identity(
-                            service_desc=service_desc,
-                            answers=state,
-                        )
-                    except Exception as e:
-                        logging.error(f"Error generating BrandIdentityMap: {e}")
-                        worker.write_data(
-                            "I had trouble generating your Brand Identity Map. Please try again or contact support.",
-                            output="TEXT",
-                        )
-                        worker.write_eos(output="TEXT")
-                        return None
-
-                    # 2) Save BrandIdentityMap to DB
-                    try:
-                        util_functions.save_brand_identity(project_id, brand_identity)
-                    except Exception as e:
-                        logging.error(f"Error saving BrandIdentityMap: {e}")
-                        worker.write_data(
-                            "I generated your Brand Identity Map, but failed to save it. Please contact support.",
-                            output="TEXT",
-                        )
-                        worker.write_eos(output="TEXT")
-                        return None
-
-                    # 3) Show summary
-                    summary_lines = [
-                        "Here is your Brand Identity Map:",
-                        f"- Brand name: {brand_identity.get('brand_name')}",
-                        f"- Tagline: {brand_identity.get('tagline')}",
-                        f"- Mission: {brand_identity.get('mission')}",
-                    ]
-                    values = brand_identity.get("values") or []
-                    if values:
-                        summary_lines.append(f"- Values: {', '.join(values)}")
-                    uvp = brand_identity.get("uniqueValueProposition")
-                    if uvp:
-                        summary_lines.append(f"- Unique Value Proposition: {uvp}")
-
-                    worker.write_data("\n".join(summary_lines), output="TEXT")
-                    worker.write_data(
-                        "\nThis version has been saved. You can refine it later if needed.",
-                        output="TEXT",
-                    )
-                    worker.write_eos(output="TEXT")
-
-                    # Reset state if you want to allow another run
-                    self._set_step(worker, 0)
-                    self._set_state(worker, {})
-                else:
-                    # Unknown step; reset
-                    self._set_step(worker, 0)
-                    self._set_state(worker, {})
-
-            else: # Not DONE → field change event: keep latest value
-                data = message.getData()
-                path = data.get("path")
-                if path and worker:
-                    timestamp = worker.get_data(path + ".timestamp")
-                    new_ts = data.get("timestamp")
-                    if timestamp is None or (new_ts is not None and new_ts > timestamp):
-                        worker.set_data(
-                            path,
-                            {
-                                "value": data.get("value"),
-                                "timestamp": new_ts,
-                            },
-                        )
+                else:  # Not DONE → field change event: keep latest value
+                    data = message.getData()
+                    path = data.get("path")
+                    if path and worker:
+                        timestamp = worker.get_data(path + ".timestamp")
+                        new_ts = data.get("timestamp")
+                        if timestamp is None or (new_ts is not None and new_ts > timestamp):
+                            worker.set_data(
+                                path,
+                                {
+                                    "value": data.get("value"),
+                                    "timestamp": new_ts,
+                                },
+                            )
             return None
 
         # ---------- Non-EVENT inputs (DEFAULT) ----------
 
         if message.isBOS():
-            # Initialize stream buffer; we don't actually use the text buffer heavily,
-            # but this keeps parity with the template.
+            # Initialize stream
             if worker:
                 worker.set_data(stream, [])
             return None
@@ -617,7 +619,6 @@ class BrandingInteractiveAgent(Agent):
                 # Keep step at 0 so the EVENT/DONE handler knows we're in profile step
                 self._set_step(worker, 0)
             return None
-
 
         return None
 
